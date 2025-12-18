@@ -357,62 +357,68 @@ public class SyncThreadArchiveFile {
     }
 
     static private int moveFileLocalToSmb(SyncThreadWorkArea stwa, SyncTaskItem sti, String from_path,
-                                          SafFile3 mf, JcifsFile tf, String to_path, String file_name) throws Exception, JcifsException {
+                                          SafFile3 mf, JcifsFile tf, String to_path, String file_name) {
         int sync_result=0;
 
-        if (SyncThread.sendConfirmRequest(stwa, sti, CONFIRM_REQUEST_MOVE, from_path, to_path)) {
-            if (!sti.isSyncTestMode()) {
-                String dir=tf.getParent();
-                JcifsFile jf_dir=new JcifsFile(dir,stwa.destinationSmbAuth);
-                if (!jf_dir.exists()) jf_dir.mkdirs();
-                while (stwa.retryCount > 0) {
-                    sync_result= copyFile(stwa, sti, mf.getInputStream(),
-                            tf.getOutputStream(), from_path, to_path,
-                            tf.getName(), sti.isSyncOptionUseSmallIoBuffer());
-                    if (sync_result == SyncTaskItem.SYNC_RESULT_STATUS_ERROR && SyncThread.isJcifsRetryRequiredError(stwa.jcifsNtStatusCode)) {
-                        stwa.retryCount--;
-                        if (stwa.retryCount > 0)
-                            sync_result = waitRetryInterval(stwa);
-                        if (sync_result == SyncTaskItem.SYNC_RESULT_STATUS_CANCEL)
+        try {
+            if (SyncThread.sendConfirmRequest(stwa, sti, CONFIRM_REQUEST_MOVE, from_path, to_path)) {
+                if (!sti.isSyncTestMode()) {
+                    String dir=tf.getParent();
+                    JcifsFile jf_dir=new JcifsFile(dir,stwa.destinationSmbAuth);
+                    if (!jf_dir.exists()) jf_dir.mkdirs();
+                    while (stwa.retryCount > 0) {
+                        sync_result= copyFile(stwa, sti, mf.getInputStream(),
+                                tf.getOutputStream(), from_path, to_path,
+                                tf.getName(), sti.isSyncOptionUseSmallIoBuffer());
+                        if (sync_result == SyncTaskItem.SYNC_RESULT_STATUS_ERROR && SyncThread.isJcifsRetryRequiredError(stwa.jcifsNtStatusCode)) {
+                            stwa.retryCount--;
+                            if (stwa.retryCount > 0)
+                                sync_result = waitRetryInterval(stwa);
+                            if (sync_result == SyncTaskItem.SYNC_RESULT_STATUS_CANCEL)
+                                break;
+                        } else {
                             break;
-                    } else {
-                        break;
-                    }
-                }
-                if (sync_result!= SyncTaskItem.SYNC_RESULT_STATUS_ERROR) stwa.retryCount=sti.getSyncOptionRetryCount();
-                if (sync_result== SyncTaskItem.SYNC_RESULT_STATUS_SUCCESS) {
-                    boolean rc=mf.delete();
-                    if (rc) {
-                        stwa.totalCopyCount++;
-                        SyncThread.showArchiveMsg(stwa, false, sti.getSyncTaskName(), "I", from_path, to_path, mf.getName(), tf.getName(),
-                                stwa.appContext.getString(R.string.msgs_mirror_task_file_archived));
-                        if (!sti.isSyncTestMode()) {
-                            try {
-                                tf.setLastModified(mf.lastModified());
-                            } catch(JcifsException e) {
-                                // nop
-                            }
-                            stwa.totalDeleteCount++;
-                            SyncThread.scanMediaFile(stwa, sti, mf);
                         }
-                    } else {
-                        tf.delete();
-                        stwa.util.addLogMsg("W", sti.getSyncTaskName(), from_path, " ",
-                                stwa.appContext.getString(R.string.msgs_mirror_task_file_move_failed_delete, mf.getName()));
-                        sync_result=SyncTaskItem.SYNC_RESULT_STATUS_ERROR;
+                    }
+                    if (sync_result!= SyncTaskItem.SYNC_RESULT_STATUS_ERROR) stwa.retryCount=sti.getSyncOptionRetryCount();
+                    if (sync_result== SyncTaskItem.SYNC_RESULT_STATUS_SUCCESS) {
+                        boolean rc=mf.delete();
+                        if (rc) {
+                            stwa.totalCopyCount++;
+                            SyncThread.showArchiveMsg(stwa, false, sti.getSyncTaskName(), "I", from_path, to_path, mf.getName(), tf.getName(),
+                                    stwa.appContext.getString(R.string.msgs_mirror_task_file_archived));
+                            if (!sti.isSyncTestMode()) {
+                                try {
+                                    tf.setLastModified(mf.lastModified());
+                                } catch(JcifsException e) {
+                                    // nop
+                                }
+                                stwa.totalDeleteCount++;
+                                SyncThread.scanMediaFile(stwa, sti, mf);
+                            }
+                        } else {
+                            tf.delete();
+                            stwa.util.addLogMsg("W", sti.getSyncTaskName(), from_path, " ",
+                                    stwa.appContext.getString(R.string.msgs_mirror_task_file_move_failed_delete, mf.getName()));
+                            sync_result=SyncTaskItem.SYNC_RESULT_STATUS_ERROR;
+                        }
                     }
                 }
+            } else {
+                stwa.util.addLogMsg("W", sti.getSyncTaskName(), to_path, " ", stwa.appContext.getString(R.string.msgs_mirror_confirm_move_cancel));
             }
-        } else {
-            stwa.util.addLogMsg("W", sti.getSyncTaskName(), to_path, " ", stwa.appContext.getString(R.string.msgs_mirror_confirm_move_cancel));
+        } catch (Exception e) {
+            putExceptionMsg(stwa, sti, from_path, to_path, e);
+            sync_result=SyncTaskItem.SYNC_RESULT_STATUS_ERROR;
         }
 
         return sync_result;
     }
 
     static private int archiveFileLocalToSmb(SyncThreadWorkArea stwa, SyncTaskItem sti, SafFile3[] children,
-                                             String from_path, String to_path) throws Exception, JcifsException {
-        int file_seq_no=0, sync_result=0;
+                                             String from_path, String to_path) {
+        int file_seq_no=0;
+        int sync_result=0;
         ArrayList<ArchiveFileListItem> fl= buildSafFileList(stwa, sti, children);
         for(ArchiveFileListItem item:fl) {
             if (SyncThread.isTaskCancelled(true, stwa.gp.syncThreadCtrl)) {
@@ -448,20 +454,39 @@ public class SyncThreadArchiveFile {
             to_file_seqno=getFileSeqNumber(stwa, sti, file_seq_no);
             to_file_name= convertFileNameWithDate(stwa, sti, item, to_file_name)+to_file_seqno;
             String temp_dir= convertKeywordWithDate(stwa, sti, to_path, item);
-            JcifsFile tf=new JcifsFile(temp_dir+"/"+to_file_name+to_file_ext, stwa.destinationSmbAuth);
-            if (tf.exists()) {
-                String new_name=createArchiveLocalNewFilePath(stwa, sti, to_path, to_path+"/"+temp_dir+"/"+to_file_name+to_file_seqno,to_file_ext) ;
-                if (new_name.equals("")) {
-                    stwa.util.addLogMsg("E",sti.getSyncTaskName(), "Archive sequence number overflow error.");
-                    sync_result= SyncTaskItem.SYNC_RESULT_STATUS_ERROR;
-                    break;
+            String planned_to_path="";
+            try {
+                JcifsFile tf=new JcifsFile(temp_dir+"/"+to_file_name+to_file_ext, stwa.destinationSmbAuth);
+                planned_to_path=tf.getPath();
+                if (tf.exists()) {
+                    String new_name=createArchiveLocalNewFilePath(stwa, sti, to_path, to_path+"/"+temp_dir+"/"+to_file_name+to_file_seqno,to_file_ext) ;
+                    if (new_name.equals("")) {
+                        stwa.util.addLogMsg("E",sti.getSyncTaskName(), item.full_path, " ", "Archive sequence number overflow error.");
+                        sync_result= SyncTaskItem.SYNC_RESULT_STATUS_ERROR;
+                        continue;
+                    } else {
+                        tf=new JcifsFile(new_name, stwa.destinationSmbAuth);
+                        planned_to_path=tf.getPath();
+                        int r= moveFileLocalToSmb(stwa, sti, item.full_path, (SafFile3)item.file, tf, tf.getPath(), new_name);
+                        if (r==SyncTaskItem.SYNC_RESULT_STATUS_CANCEL) {
+                            sync_result=r;
+                            break;
+                        }
+                        if (r==SyncTaskItem.SYNC_RESULT_STATUS_ERROR) sync_result=r;
+                    }
                 } else {
-                    tf=new JcifsFile(new_name, stwa.destinationSmbAuth);
-                    sync_result= moveFileLocalToSmb(stwa, sti, item.full_path, (SafFile3)item.file, tf, tf.getPath(), new_name);
+                    int r= moveFileLocalToSmb(stwa, sti, item.full_path, (SafFile3)item.file, tf, tf.getPath(),
+                            to_path+"/"+temp_dir+"/"+to_file_name+to_file_ext);
+                    if (r==SyncTaskItem.SYNC_RESULT_STATUS_CANCEL) {
+                        sync_result=r;
+                        break;
+                    }
+                    if (r==SyncTaskItem.SYNC_RESULT_STATUS_ERROR) sync_result=r;
                 }
-            } else {
-                sync_result= moveFileLocalToSmb(stwa, sti, item.full_path, (SafFile3)item.file, tf, tf.getPath(),
-                        to_path+"/"+temp_dir+"/"+to_file_name+to_file_ext);
+            } catch (Exception e) {
+                putExceptionMsg(stwa, sti, item.full_path, planned_to_path.equals("") ? to_path : planned_to_path, e);
+                sync_result=SyncTaskItem.SYNC_RESULT_STATUS_ERROR;
+                // continue with next file
             }
 
         }
@@ -545,9 +570,6 @@ public class SyncThreadArchiveFile {
                 SyncThread.showMsg(stwa, true, sti.getSyncTaskName(), "E", "", "", stwa.gp.syncThreadCtrl.getThreadMessage());
                 return SyncTaskItem.SYNC_RESULT_STATUS_ERROR;
             }
-        } catch (JcifsException e) {
-            putExceptionMsg(stwa, sti, from_path, to_path, e);
-            return SyncTaskItem.SYNC_RESULT_STATUS_ERROR;
         } catch (Exception e) {
             putExceptionMsg(stwa, sti, from_path, to_path, e);
             return SyncTaskItem.SYNC_RESULT_STATUS_ERROR;
